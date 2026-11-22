@@ -7,8 +7,11 @@ import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
+import android.os.SystemClock
 import android.view.Gravity
+import android.view.InputDevice
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.webkit.CookieManager
@@ -61,6 +64,11 @@ class TikTokActivity : Activity() {
             setAcceptThirdPartyCookies(web, true)
         }
         if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+            // A build can carry hatun modu's creators in an untracked hatun-seed.json; lean.js adds them once.
+            if (assets.list("")?.contains("hatun-seed.json") == true) {
+                val seed = assets.open("hatun-seed.json").bufferedReader().use { it.readText() }
+                WebViewCompat.addDocumentStartJavaScript(web, "window.falconSeeds = $seed;", setOf("https://*.tiktok.com"))
+            }
             // lean.js first: on the feed it takes the remote before tv.js sees it.
             for (name in listOf("lean.js", "tv.js")) {
                 val script = assets.open(name).bufferedReader().use { it.readText() }
@@ -69,9 +77,15 @@ class TikTokActivity : Activity() {
         }
         // The scripts say when the feed is playing (or a page without videos has loaded). lean.js says
         // "starting" as it hands the first video to the player, with its first frame due a moment later.
+        // tv.js also sends the viewer's taps and drags on TikTok's checks ("pointer …").
         if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
             WebViewCompat.addWebMessageListener(web, "falconApp", setOf("https://*.tiktok.com")) { _, message, _, _, _ ->
-                if (message.data == "starting") loading.postDelayed(::ready, FIRST_FRAME_MS) else ready()
+                val data = message.data.orEmpty()
+                when {
+                    data.startsWith("pointer ") -> pointer(data)
+                    data == "starting" -> loading.postDelayed(::ready, FIRST_FRAME_MS)
+                    else -> ready()
+                }
             }
         }
 
@@ -124,6 +138,37 @@ class TikTokActivity : Activity() {
     }
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+
+    /** When the finger of the drag under way went down; 0 with none. */
+    private var fingerDownAt = 0L
+
+    /**
+     * A finger on the page where assets/tv.js says ("pointer down|move|up x y pageWidth", in the page's CSS
+     * pixels). That's how the remote works TikTok's checks (drag the slider, tap the shapes), which are made
+     * for a mouse or a finger: tv.js moves a pointer with the arrows and says where the viewer tapped or
+     * dragged. The viewer does the check; this only passes their taps and drags on.
+     */
+    private fun pointer(command: String) {
+        val parts = command.split(' ')
+        val action = when (parts.getOrNull(1)) {
+            "down" -> MotionEvent.ACTION_DOWN
+            "move" -> MotionEvent.ACTION_MOVE
+            "up" -> MotionEvent.ACTION_UP
+            else -> return
+        }
+        val x = parts.getOrNull(2)?.toFloatOrNull() ?: return
+        val y = parts.getOrNull(3)?.toFloatOrNull() ?: return
+        val pageWidth = parts.getOrNull(4)?.toFloatOrNull() ?: 0f
+        val scale = if (pageWidth > 0f) web.width / pageWidth else resources.displayMetrics.density
+        val now = SystemClock.uptimeMillis()
+        if (action == MotionEvent.ACTION_DOWN) fingerDownAt = now
+        if (fingerDownAt == 0L) return
+        val event = MotionEvent.obtain(fingerDownAt, now, action, x * scale, y * scale, 0)
+        event.source = InputDevice.SOURCE_TOUCHSCREEN
+        web.dispatchTouchEvent(event)
+        event.recycle()
+        if (action == MotionEvent.ACTION_UP) fingerDownAt = 0L
+    }
 
     /**
      * Desktop Chrome on Windows, at the WebView's own Chrome version, in the user agent and in its client

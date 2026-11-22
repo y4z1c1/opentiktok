@@ -14,3 +14,6 @@ keystore.properties
 
 # Release APKs, uploaded to GitHub Releases
 dist/
+
+# hatun modu creators carried into a local build (personal, never committed)
+app/src/main/assets/hatun-seed.json

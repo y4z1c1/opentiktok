@@ -36,8 +36,9 @@
     /* No header, no side menu, no mouse arrows: the video column takes the whole width. */
     #app-header, #fixed-top-container, [data-e2e^="feed-navigation"], [data-e2e="anchoring-scroll-controls"],
     [class*="DivFeedNavigationContainer"] { display: none !important; }
-    /* The page itself is main#main-content-… on the feed, a div#main-content-… elsewhere (Explore). */
-    [class*="BaseBodyContainer"] > :not(main):not([id^="main-content"]) { display: none !important; }
+    /* The page itself is main#main-content-… on the feed, a div#main-content-… elsewhere (Explore), and inside
+       a wrapper on a profile. */
+    [class*="BaseBodyContainer"] > :not(main):not([id^="main-content"]):not(:has([id^="main-content"])) { display: none !important; }
     [id^="main-content"] { flex: 1 1 auto !important; max-width: none !important; }
     ::-webkit-scrollbar { display: none; }
 
@@ -73,6 +74,22 @@
         border-radius 160ms ease-out, opacity 120ms ease-out;
     }
     #falcon-ring.on { opacity: 1; }
+
+    /* The pointer the remote moves over TikTok's checks, and what the keys do there. */
+    #falcon-pointer {
+      position: fixed; z-index: 2147483647; left: 0; top: 0; width: 22px; height: 22px; margin: -11px 0 0 -11px;
+      box-sizing: border-box; border-radius: 50%; border: 2.5px solid #fff; background: rgba(254, 44, 85, 0.3);
+      box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35), 0 2px 10px rgba(0, 0, 0, 0.5); pointer-events: none; opacity: 0;
+      transition: transform 60ms linear, opacity 120ms ease-out, background 120ms ease-out;
+    }
+    #falcon-pointer.on { opacity: 1; }
+    #falcon-pointer.grab { background: #fe2c55; }
+    #falcon-pointer-tip {
+      position: fixed; z-index: 2147483647; left: 50%; bottom: 22px; transform: translateX(-50%); pointer-events: none;
+      padding: 9px 18px; border-radius: 999px; background: rgba(22, 22, 22, 0.92); color: #fff; white-space: nowrap;
+      font: 600 13px/1.2 system-ui, sans-serif; box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.15); display: none;
+    }
+    html.falcon-check #falcon-pointer-tip { display: block; }
   `;
 
   /** Things a mouse could click: real controls, plus whatever TikTok gives a pointer cursor. */
@@ -85,7 +102,7 @@
   const BAR = ['anchoring-playback-control-play', 'cinema-playback-control-autoscroll', 'cinema-playback-control-speed',
     'cinema-playback-control-captions', 'cinema-playback-control-volume', 'more-menu-icon'];
   const POPUPS = '[class*="DivModalContainer"], [class*="tux-modal__container--open"], [role="dialog"], ' +
-    '[aria-modal="true"], [class*="DivCommentSidebarTransitionWrapper"]';
+    '[aria-modal="true"], [class*="DivCommentSidebarTransitionWrapper"], .captcha-verify-container';
   const KEYS = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', Enter: 'ok' };
   /** Ring gap around a control, in CSS pixels. */
   const GAP = 5;
@@ -146,6 +163,8 @@
   };
   /** The menu entry whose panel is open. */
   let panelOpener = null;
+  /** The pop-up Back last tried Escape on. */
+  let escaped = null;
 
   const sideButtons = () => SIDE.map(e2e => [...document.querySelectorAll(`[data-e2e="${e2e}"]`)].find(visible))
     .filter(Boolean);
@@ -156,7 +175,7 @@
   };
 
   const isClose = el => /close|kapat|schlie|fermer|cerrar/i.test(
-    `${el.getAttribute('aria-label')} ${el.dataset?.e2e} ${el.className} ${el.parentElement?.className}`);
+    `${el.getAttribute('aria-label')} ${el.dataset?.e2e} ${el.id} ${el.className} ${el.parentElement?.className}`);
 
   /** Where the ring can go right now, and where it starts. */
   const stops = () => {
@@ -168,7 +187,11 @@
         items.find(el => !isClose(el)) || items[0];
       return { layer, items, start };
     }
-    if (!isWatching()) return { layer: document, items: clickables(document.body, true) };
+    // A page (a profile, Explore): everything on it, below the screen too, so the ring can go down the page.
+    if (!isWatching()) {
+      const items = clickables(document.body);
+      return { layer: document, items, start: items.find(visible) };
+    }
     if (mode === 'menu') {
       const panel = menuPanel();
       if (panel) {
@@ -242,7 +265,7 @@
 
   const focus = el => {
     focused = el;
-    if (el && popup()) el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+    if (el && (popup() || !isWatching())) el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
     // In the menu at once, so the ring lands where the entry ends up.
     else if (el && mode === 'menu') el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     showRing();
@@ -351,9 +374,96 @@
     return removeListener.call(this, type, (type === 'timeupdate' && throttled.get(listener)) || listener, options);
   };
 
+  // ---- TikTok's checks ------------------------------------------------------------------------------------
+  // Now and then TikTok asks the viewer to show they're a person: drag a slider until a picture fits, or tap
+  // matching shapes. Those are made for a mouse or a finger, so while one is up, the remote moves a pointer
+  // over it instead of the ring: ◀▶▲▼ move it (faster while held), OK taps, and OK on the slider takes hold
+  // of it until the next OK lets go. The viewer does the check; the app only passes their taps and drags on
+  // to the page, as a finger would make them (TikTokActivity.pointer).
+  const CHECK = '.captcha-verify-container, #captcha-verify-container-main-page';
+  const SLIDER = '#captcha_slide_button, .secsdk-captcha-drag-icon';
+  const TIP = {
+    en: '◀ ▶ ▲ ▼ move   ·   OK taps   ·   OK on the slider holds it, OK again lets go',
+    tr: '◀ ▶ ▲ ▼ taşır   ·   OK dokunur   ·   kaydırıcıda OK tutar, tekrar OK bırakır',
+  };
+  const checkBox = () => [...document.querySelectorAll(CHECK)].find(visible) || null;
+  let pointer = null, tip = null, checking = false, holding = false, px = 0, py = 0, held = 0, lastKey = '';
+  /** The viewer has moved the pointer: it stays where they put it. */
+  let moved = false;
+  /** On the slider, where most checks start (it can arrive a moment after the check itself). */
+  const toSlider = box => {
+    const slider = [...box.querySelectorAll(SLIDER)].find(visible);
+    if (!slider && moved) return;
+    const r = (slider || box).getBoundingClientRect();
+    px = r.left + r.width / 2;
+    py = r.top + r.height / 2;
+    movePointer();
+    return !!slider;
+  };
+  let onSlider = false;
+  const finger = kind => {
+    try { window.falconApp?.postMessage(`pointer ${kind} ${px.toFixed(1)} ${py.toFixed(1)} ${innerWidth}`); } catch (_) {}
+  };
+  const movePointer = () => { pointer.style.transform = `translate(${px}px, ${py}px)`; };
+  const letGo = () => {
+    if (holding) finger('up');
+    holding = false;
+    pointer?.classList.remove('grab');
+  };
+  const startCheck = box => {
+    checking = true;
+    if (!pointer) {
+      pointer = document.createElement('div');
+      pointer.id = 'falcon-pointer';
+      tip = document.createElement('div');
+      tip.id = 'falcon-pointer-tip';
+      document.documentElement.append(pointer, tip);
+    }
+    let lang = navigator.language;
+    try { lang = localStorage.getItem('falcon-lean-lang') || lang; } catch (_) {}
+    tip.textContent = TIP[lang.slice(0, 2)] || TIP.en;
+    moved = false;
+    onSlider = toSlider(box);
+    pointer.classList.add('on');
+    document.documentElement.classList.add('falcon-check');
+    focus(null);
+  };
+  const endCheck = () => {
+    letGo();
+    checking = false;
+    pointer?.classList.remove('on');
+    document.documentElement.classList.remove('falcon-check');
+  };
+  const checkKey = (key, e) => {
+    if (key === 'ok') {
+      if (e.repeat) return;
+      if (holding) return letGo();
+      const under = document.elementFromPoint(px, py);
+      finger('down');
+      if (under && (under.closest(SLIDER) || getComputedStyle(under).cursor === 'grab')) {
+        holding = true;
+        pointer.classList.add('grab');
+      } else finger('up');
+      return;
+    }
+    held = e.repeat && key === lastKey ? held + 1 : 0;
+    lastKey = key;
+    moved = true;
+    const step = Math.min(24, 2 + held * 1.5);
+    if (key === 'left' || key === 'right') px = Math.max(0, Math.min(innerWidth - 1, px + (key === 'left' ? -step : step)));
+    else py = Math.max(0, Math.min(innerHeight - 1, py + (key === 'up' ? -step : step)));
+    movePointer();
+    if (holding) finger('move');
+  };
+
   addEventListener('keydown', e => {
     const key = KEYS[e.key];
     if (!key) return;
+    if (checking) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      return checkKey(key, e);
+    }
     // In a text field, Left/Right move the caret and OK submits; Up/Down leave it.
     if (e.target?.matches?.('input, textarea')) {
       if (key !== 'up' && key !== 'down') return;
@@ -404,6 +514,11 @@
   // The same timer moves the progress line.
   let progress = null;
   setInterval(() => {
+    const box = checkBox();
+    if (box && !checking) startCheck(box);
+    else if (!box && checking) endCheck();
+    else if (checking && !moved && !onSlider) onSlider = toSlider(box);
+    if (checking) return;
     const s = stops();
     if (s?.layer && s.layer !== document && (!focused || !s.items.includes(focused))) focus(s.start || null);
     else if (!s && focused) focus(null);
@@ -495,11 +610,25 @@
     /** Back: closes a pop-up or leaves the side buttons and menu. False if there's nothing to close. */
     back() {
       if (window.falconLean?.back()) return true;
+      if (checking) letGo();
       const layer = popup();
       if (layer && !(layer instanceof ShadowRoot)) {
-        const close = [...layer.querySelectorAll('[aria-label], [data-e2e], [class*="Close"]')].find(el => isClose(el) && visible(el));
+        // The close button can sit outside the pop-up's own box, in the frame around it (sign-in's does).
+        const closeIn = box => [...box.querySelectorAll('[aria-label], [data-e2e], [class*="Close"], [id*="close"]')]
+          .find(el => isClose(el) && visible(el));
+        let close = null;
+        for (let box = layer, up = 0; box && box !== document.body && !close && up < 4; box = box.parentElement, up++) close = closeIn(box);
         // The handler can sit on a button inside the close wrapper (the comments panel's does).
         if (close) { (close.querySelector('button, [role="button"]') || close).click(); focus(null); return true; }
+        // No close button found: Escape first (TikTok's pop-ups take it), rather than leaving the app under
+        // it. A second Back on the same pop-up leaves as usual.
+        if (escaped !== layer) {
+          escaped = layer;
+          for (const type of ['keydown', 'keyup']) {
+            (document.activeElement || document.body).dispatchEvent(new KeyboardEvent(type, { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true }));
+          }
+          return true;
+        }
       }
       // A panel beside the menu closes back to the menu (its entry toggles it).
       if (mode === 'menu' && menuPanel()) {
