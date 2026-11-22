@@ -793,13 +793,19 @@
   const RETRY_MS = 60000;
   const resting = src => src.retryAt > performance.now();
   /** The accounts TikTok suggests on a picked creator's profile, as sources. One suggested again gets a vote. */
+  /**
+   * TikTok's "similar accounts" are partly about the viewer, not the creator: famous accounts (verified, or
+   * followed by millions) come up beside almost anyone, and so would win on votes. They're left out.
+   */
+  const FAMOUS = 3e6;
+  const famous = (u, st) => !!u.verified || Number(st?.followerCount ?? u.followerCount ?? 0) > FAMOUS;
   const discover = src => api('/api/user/list/', { count: 30, maxCursor: 0, minCursor: 0, scene: 151, targetUserId: src.uid,
     isNonPersonalized: false, device_platform: 'web_pc', from_page: 'user' }).then(j => {
     if (!j) return false;
     mine.asked.add(src.secUid);
     const no = blocked();
-    for (const { user: u } of j?.userList || []) {
-      if (!u?.secUid || u.privateAccount || no.has(u.secUid) || youngBio(u.signature || '') || mine.picked.some(p => p.secUid === u.secUid)) continue;
+    for (const { user: u, stats: st } of j?.userList || []) {
+      if (!u?.secUid || u.privateAccount || famous(u, st) || no.has(u.secUid) || youngBio(u.signature || '') || mine.picked.some(p => p.secUid === u.secUid)) continue;
       const known = mine.found.find(f => f.secUid === u.secUid);
       if (known) known.votes++; else mine.found.push(source(u.secUid, u.id || ''));
     }
@@ -886,6 +892,17 @@
     mine.found = mine.found.filter(f => f.secUid !== secUid);
     syncPicked();
     return true;
+  };
+
+  /** Takes the video's creator out of hatun modu for good (not picked, never suggested again) and moves on. */
+  const dropCreator = it => {
+    const secUid = it?.author?.secUid;
+    if (!secUid) return;
+    store({ creators: seeds().filter(c => c.secUid !== secUid), blocked: [...new Set([...blocked(), secUid])] });
+    syncPicked();
+    for (let i = mine.items.length - 1; i > index; i--) if (mine.items[i].author?.secUid === secUid) mine.items.splice(i, 1);
+    toast(text().dropped);
+    step(1);
   };
 
   const renderMine = () => {
@@ -1040,6 +1057,7 @@
       following: 'Following', followers: 'Followers', likes: 'Likes', noVideos: 'No videos yet',
       private: 'This account is private', pinned: 'Pinned', autoOn: 'Auto: on', autoOff: 'Auto: off',
       mine: 'hatun modu', forYou: 'For You', added: 'Added to hatun modu', already: 'Already in hatun modu',
+      dropped: 'Taken out of hatun modu',
       mineEmpty: "hatun modu is empty. Hold OK on this button to add the video's creator.",
       mineNothing: "TikTok didn't send hatun modu's videos. It may want a check first: open a creator's page and press OK.",
       noPosts: "Couldn't load the videos here. Press OK to open this profile on TikTok's page." },
@@ -1048,6 +1066,7 @@
       following: 'Takip edilen', followers: 'Takipçi', likes: 'Beğeni', noVideos: 'Henüz video yok',
       private: 'Bu hesap gizli', pinned: 'Sabitlendi', autoOn: 'Oto: açık', autoOff: 'Oto: kapalı',
       mine: 'hatun modu', forYou: 'Senin İçin', added: 'hatun moduna eklendi', already: 'Zaten hatun modunda',
+      dropped: 'hatun modundan çıkarıldı',
       mineEmpty: 'hatun modu boş. Videonun hesabını eklemek için bu düğmede OK\'a basılı tut.',
       mineNothing: 'TikTok hatun modunun videolarını göndermedi. Önce doğrulama istiyor olabilir: bir hesabın sayfasını açıp OK\'a bas.',
       noPosts: 'Videolar burada yüklenemedi. Profili TikTok\'un sayfasında açmak için OK\'a bas.' },
@@ -1501,7 +1520,9 @@
       if (!e.repeat) { okDownAt = performance.now(); okHeld = false; okArmed = true; }
       else if (okArmed && !okHeld && (railAt < 0 || RAIL[railAt] === 'like' || RAIL[railAt] === 'mine') && performance.now() - okDownAt >= HOLD_MS) {
         okHeld = true;
-        if (RAIL[railAt] === 'mine') toast(addSeed(items[index]) ? text().added : text().already);
+        // On hatun modu's button: in For You it adds the creator, in hatun modu it takes them out.
+        if (RAIL[railAt] === 'mine' && items === mine.items) dropCreator(items[index]);
+        else if (RAIL[railAt] === 'mine') toast(addSeed(items[index]) ? text().added : text().already);
         else like(true);
         wake();
       }

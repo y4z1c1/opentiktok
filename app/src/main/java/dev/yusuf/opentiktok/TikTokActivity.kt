@@ -77,7 +77,7 @@ class TikTokActivity : Activity() {
         }
         // The scripts say when the feed is playing (or a page without videos has loaded). lean.js says
         // "starting" as it hands the first video to the player, with its first frame due a moment later.
-        // tv.js also sends the viewer's taps and drags on TikTok's checks ("pointer …").
+        // tv.js also sends the viewer's taps and drags on TikTok's checks, and its taps on text fields ("pointer …").
         if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
             WebViewCompat.addWebMessageListener(web, "falconApp", setOf("https://*.tiktok.com")) { _, message, _, _, _ ->
                 val data = message.data.orEmpty()

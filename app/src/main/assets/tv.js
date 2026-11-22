@@ -64,6 +64,20 @@
     }
     @keyframes falcon-slide { from { transform: translateX(-24px); opacity: 0; } }
 
+    /* The messages page keeps its side column: TikTok puts the conversation list there, and the chat beside it. */
+    html.falcon-messages [class*="BaseBodyContainer"] > [class*="SideNavPlaceholder"] { display: block !important; }
+    html.falcon-messages #main-content-messages { margin-left: 320px !important; }
+
+    /* The box the remote writes a message in (see openCompose): at the top, as the TV's keyboard takes the bottom. */
+    #falcon-compose {
+      position: fixed; z-index: 2147483646; display: none; box-sizing: border-box; margin: 0; padding: 0 20px;
+      left: 50%; top: 28px; width: min(720px, calc(100vw - 64px)); height: 52px; transform: translateX(-50%);
+      border: 0; border-radius: 12px; background: #2f2f2f; color: #fff; font: 17px/1.2 system-ui, sans-serif;
+      outline: none; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+    }
+    #falcon-compose.on { display: block; }
+    #falcon-compose::placeholder { color: rgba(255, 255, 255, 0.55); }
+
     /* The focus ring: a white outline that hugs the control's shape, gliding from one control to the next. */
     #falcon-ring {
       position: fixed; z-index: 2147483647; pointer-events: none; box-sizing: border-box;
@@ -94,7 +108,15 @@
 
   /** Things a mouse could click: real controls, plus whatever TikTok gives a pointer cursor. */
   const CONTROLS = 'a[href], button, input, textarea, select, [role="button"], [role="link"], [role="option"], ' +
-    '[role="checkbox"], [role="radio"], [role="tab"], [role="menuitem"], [role="switch"]';
+    '[role="checkbox"], [role="radio"], [role="tab"], [role="menuitem"], [role="switch"], [contenteditable="true"]';
+  /** Text fields: the remote's Left/Right/OK are theirs while they have focus. */
+  const TYPING = 'input, textarea, [contenteditable="true"]';
+  /** Not controls, but stops: a chat's messages, so Up/Down go back through it. */
+  const READ = '[data-e2e="dm-new-message-text"]';
+  /** In a chat: the message box, the conversations, and the way back from a chat to them. */
+  const DM_EDITOR = '[data-e2e="dm-new-input-editor"] [contenteditable="true"]';
+  const DM_ITEM = '[data-e2e="dm-new-conversation-item"]';
+  const DM_BACK = '[data-testid="dm-new-v3-back-btn"]';
   /** The buttons beside the video, in the order Up/Down walks them: who posted it, then the actions. */
   const SIDE = ['video-author-avatar', 'cinema-video-info-follow', 'feed-follow',
     'like-icon', 'comment-icon', 'favorite-icon', 'share-icon'];
@@ -131,7 +153,7 @@
   /** Clickable things inside [root], outermost only (a button's icon isn't a stop of its own). */
   const clickables = (root, onScreen = false) => {
     const all = [...root.querySelectorAll('*')].filter(el =>
-      el.matches(CONTROLS) || getComputedStyle(el).cursor === 'pointer');
+      el.matches(CONTROLS) || el.matches(READ) || getComputedStyle(el).cursor === 'pointer');
     const set = new Set(all);
     return all.filter(el => {
       for (let p = el.parentElement; p && p !== root; p = p.parentElement) if (set.has(p)) return false;
@@ -177,6 +199,9 @@
   const isClose = el => /close|kapat|schlie|fermer|cerrar/i.test(
     `${el.getAttribute('aria-label')} ${el.dataset?.e2e} ${el.id} ${el.className} ${el.parentElement?.className}`);
 
+  /** In messages, the ring starts on the message box of an open chat, else on the first conversation. */
+  const dmStart = items => items.find(el => el.matches(DM_EDITOR)) || items.find(el => el.matches(DM_ITEM));
+
   /** Where the ring can go right now, and where it starts. */
   const stops = () => {
     const layer = popup();
@@ -190,13 +215,13 @@
     // A page (a profile, Explore): everything on it, below the screen too, so the ring can go down the page.
     if (!isWatching()) {
       const items = clickables(document.body);
-      return { layer: document, items, start: items.find(visible) };
+      return { layer: document, items, start: dmStart(items) || items.find(visible) };
     }
     if (mode === 'menu') {
       const panel = menuPanel();
       if (panel) {
         const items = clickables(panel);
-        return { items, start: items.find(el => !isClose(el)) || items[0] };
+        return { items, start: dmStart(items) || items.find(el => !isClose(el)) || items[0] };
       }
       // The menu scrolls: entries below the screen's edge (More) count too. (It also slides in from a little
       // to the left, so an entry can start just off the screen.)
@@ -292,11 +317,90 @@
     return best;
   };
 
+  /**
+   * The TV's on-screen keyboard for a text field: a tap on the field, which the app turns into a touch, as
+   * WebView brings the keyboard up only for a tap (focus alone, or asking Android for it, isn't enough).
+   */
+  const keyboard = el => {
+    const r = el.getBoundingClientRect();
+    const at = `${(r.left + r.width / 2).toFixed(1)} ${(r.top + r.height / 2).toFixed(1)} ${innerWidth}`;
+    try { for (const kind of ['down', 'up']) window.falconApp?.postMessage(`pointer ${kind} ${at}`); } catch (_) {}
+  };
+
+  // ---- Writing a message ---------------------------------------------------------------------------------
+  // TikTok's message box won't keep the TV's keyboard up: right after the tap, WebView loses the caret in it
+  // and puts the keyboard away. So the remote writes in a plain box of ours over it, and what's written goes
+  // into TikTok's box when it's sent, the way a paste would, and TikTok's send button sends it.
+
+  let compose = null;
+  /** TikTok's message box the one of ours is writing for. */
+  let composeFor = null;
+  /** While a message goes into TikTok's box to be sent. */
+  let handing = false;
+  // TikTok puts the focus in a chat's message box by itself, and with the focus there, the TV's keyboard app
+  // takes the remote's OK before the page sees it. The writing happens in our box, so TikTok's keeps no focus.
+  // (It does so as a chat finishes opening, which can be after our box came up: then back to ours.)
+  addEventListener('focusin', e => {
+    if (handing || !e.target.matches?.(DM_EDITOR)) return;
+    e.target.blur();
+    if (compose?.classList.contains('on')) { compose.focus(); keyboard(compose); }
+  }, true);
+  const openCompose = editor => {
+    composeFor = editor;
+    if (!compose) {
+      compose = document.createElement('input');
+      compose.id = 'falcon-compose';
+      compose.type = 'text';
+      compose.enterKeyHint = 'send';
+      compose.autocomplete = 'off';
+      compose.addEventListener('keydown', e => {
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        sendCompose();
+      });
+      document.documentElement.appendChild(compose);
+    }
+    compose.placeholder = editor.getAttribute('aria-label') || '';
+    compose.classList.add('on');
+    compose.focus();
+    focus(compose);
+    keyboard(compose);
+  };
+  const closeCompose = () => {
+    if (!compose?.classList.contains('on')) return false;
+    compose.classList.remove('on');
+    compose.blur();
+    if (composeFor?.isConnected) focus(composeFor);
+    return true;
+  };
+  const sendCompose = () => {
+    const text = compose.value.trim();
+    const editor = composeFor?.isConnected ? composeFor : [...document.querySelectorAll(DM_EDITOR)].find(visible);
+    if (!text || !editor) return;
+    compose.value = '';
+    closeCompose();
+    handing = true;
+    editor.focus();
+    document.execCommand('insertText', false, text);
+    let tries = 0;
+    const send = () => {
+      const button = [...document.querySelectorAll('[data-e2e="dm-new-send-btn"]')].find(visible);
+      if (button) button.click();
+      else if (++tries < 15) return setTimeout(send, 100);
+      handing = false;
+      if (document.activeElement?.matches?.(DM_EDITOR)) document.activeElement.blur();
+    };
+    setTimeout(send, 100);
+  };
+
   const press = el => {
-    if (el.matches('input, textarea')) el.focus();
+    if (el.matches(DM_EDITOR)) return openCompose(el);
+    if (el.matches(TYPING)) { el.focus(); keyboard(el); }
     // The auto-scroll stop is the label and switch together; the switch is what toggles. A tile on Explore is
-    // a wrapper with the link inside; the link is what opens the video.
-    (el.matches(CONTROLS) ? el : el.querySelector('input, button, a[href]') || el).click();
+    // a wrapper with the link inside; the link is what opens the video. A conversation opens from the row
+    // itself (its button is the ⋯ menu: mute, block, delete).
+    (el.matches(CONTROLS) || el.matches(DM_ITEM) ? el : el.querySelector('input, button, a[href]') || el).click();
     // Whatever opens or closes next, the ring follows.
     setTimeout(showRing, 250);
   };
@@ -464,9 +568,17 @@
       e.stopImmediatePropagation();
       return checkKey(key, e);
     }
-    // In a text field, Left/Right move the caret and OK submits; Up/Down leave it.
-    if (e.target?.matches?.('input, textarea')) {
+    // In a text field, Left/Right move the caret and OK submits (sends, in a chat); Up/Down leave it.
+    if (e.target?.matches?.(TYPING)) {
+      // OK in an empty one brings up the keyboard: TikTok puts the focus in a chat's message box by itself.
+      if (key === 'ok' && !(e.target.value ?? e.target.textContent).trim()) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        return e.target.matches(DM_EDITOR) ? openCompose(e.target) : keyboard(e.target);
+      }
       if (key !== 'up' && key !== 'down') return;
+      // Up or Down out of our message box puts it away; what was written stays for the next time.
+      if (e.target === compose) compose.classList.remove('on');
       e.target.blur();
     }
     const s = stops();
@@ -481,6 +593,9 @@
     }
     e.preventDefault();
     e.stopImmediatePropagation();
+    // A control TikTok just drew again (a chat's message box is, as the chat opens) hands the ring to the one
+    // that replaced it, and the key still counts. Otherwise a first key only shows where the ring is.
+    if (focused && !focused.isConnected && s.start) focused = s.start;
     if (!focused || !s.items.includes(focused)) return focus(s.start || s.items[0] || null);
     if (key === 'ok') return press(focused);
     if (s.ordered) {
@@ -519,6 +634,7 @@
     else if (!box && checking) endCheck();
     else if (checking && !moved && !onSlider) onSlider = toSlider(box);
     if (checking) return;
+    document.documentElement.classList.toggle('falcon-messages', location.pathname.startsWith('/messages'));
     const s = stops();
     if (s?.layer && s.layer !== document && (!focused || !s.items.includes(focused))) focus(s.start || null);
     else if (!s && focused) focus(null);
@@ -606,6 +722,18 @@
     setTimeout(check, 150);
   }, true);
 
+  // Opening a conversation puts the ring on its message box, once the chat is there.
+  addEventListener('click', e => {
+    if (!e.target.closest?.(DM_ITEM)) return;
+    let tries = 0;
+    const toEditor = () => {
+      const editor = [...document.querySelectorAll(DM_EDITOR)].find(visible);
+      if (editor) focus(editor);
+      else if (++tries < 12) setTimeout(toEditor, 150);
+    };
+    setTimeout(toEditor, 150);
+  }, true);
+
   window.falconTv = {
     /** Back: closes a pop-up or leaves the side buttons and menu. False if there's nothing to close. */
     back() {
@@ -629,6 +757,16 @@
           }
           return true;
         }
+      }
+      // Writing a message: Back puts the box away (the keyboard has gone already), keeping what was written.
+      if (closeCompose()) return true;
+      // From a chat, back to the conversations.
+      const dmBack = [...document.querySelectorAll(DM_BACK)].find(visible);
+      if (dmBack) {
+        document.activeElement?.blur?.();
+        dmBack.click();
+        setTimeout(() => focus(dmStart(stops()?.items || []) || null), 300);
+        return true;
       }
       // A panel beside the menu closes back to the menu (its entry toggles it).
       if (mode === 'menu' && menuPanel()) {

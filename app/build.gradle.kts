@@ -37,6 +37,8 @@ android {
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
             // Without a release key, the debug key, so a build from source installs right away.
             signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
+            // -Pinspect: a release build chrome://inspect can open, to look into one already installed.
+            isDebuggable = project.hasProperty("inspect")
         }
     }
     compileOptions {

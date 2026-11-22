@@ -16,6 +16,7 @@
         <activity
             android:name=".TikTokActivity"
             android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenLayout|screenSize|uiMode"
+            android:windowSoftInputMode="adjustPan"
             android:exported="true"
             android:launchMode="singleTask"
             android:screenOrientation="landscape">

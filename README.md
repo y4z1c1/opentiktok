@@ -31,12 +31,16 @@ likes and Following are the same as on your phone.
   ▲▼ go through theirs; Back takes you to their page, then to your feed where you were.
 - **Send a video to friends.** The share button beside the video opens TikTok's own share panel, on "Send to
   friends", and you pick who gets it with the remote. When the panel closes, you're back in your feed.
+- **Messages.** In TikTok's menu (◀), Messages lists your chats beside the video. OK opens one, ▲▼ go back
+  through its messages, and OK on the message box brings up the TV's keyboard to write; its send key sends. Back
+  goes from the chat to your chats, then closes them.
 - **No ads.** Ads in the feed are left out as they arrive, so they never play.
 - **hatun modu: a second feed of your own picking.** Hold OK on its button beside a video to add that video's
   creator. Pressing the button switches between For You and a feed of the creators you added, plus the accounts
-  TikTok suggests as similar to them (those suggested for several of yours come first). A like there adds that
-  creator too. What you add stays on your TV. Videos whose caption or creator's bio suggests someone under 18 are
-  left out.
+  TikTok suggests as similar to them (those suggested for several of yours come first; famous accounts, verified
+  or followed by millions, are left out, as TikTok suggests them beside almost anyone). A like there adds that
+  creator too, and holding OK on the button there takes the video's creator out for good. What you add stays on
+  your TV. Videos whose caption or creator's bio suggests someone under 18 are left out.
 - **Plays on by itself.** When a video ends, the next one starts, so the feed runs hands-free. The last button
   beside the video turns that off (the video then starts over, as on TikTok), and the app remembers the choice.
 - **The rest of TikTok works with the remote.** ◀ opens TikTok's menu (Following, Explore, LIVE, your profile…).
@@ -53,7 +57,7 @@ likes and Following are the same as on your phone.
 | --- | --- | --- | --- | --- |
 | ▲ ▼ | previous / next video (on the buttons: move between them) | move through them | move in the grid | move the focus ring |
 | OK | pause / play (on a button: press it) | show or hide the replies | play the video | press what the ring is on |
-| Hold OK | like (on hatun modu's button: add the creator to it) | | | |
+| Hold OK | like (on hatun modu's button: add the creator to it, or in hatun modu take them out) | | | |
 | ◀ | TikTok's menu (on the buttons: back to the video) | close | move in the grid | move the focus ring |
 | ▶ | the buttons beside the video: creator, like, comments, share, hatun modu, auto next | | move in the grid | move the focus ring |
 | Back | leave the buttons, or exit | close | back to the feed | close the pop-up, menu or page |
@@ -120,8 +124,9 @@ into touches on the page, as a finger would make them.
   processor busy.
 - The feed player has no follow or save buttons yet, and comments can be read but not written.
 - Following, Explore and LIVE use TikTok's own player, which is slower on a TV.
-- TikTok sometimes won't hand a creator's videos to the app. The creator's page then says so, and OK opens
-  TikTok's own profile page instead (where TikTok may ask for a check first).
+- TikTok sometimes won't hand a creator's videos to the app, for a while after many requests. The creator's page
+  then says so, and OK opens TikTok's own profile page instead, where TikTok may ask for a check first; hatun modu
+  waits for the same.
 - TikTok can change its website at any time and break things. Issues and pull requests are welcome.
 
 Tested on a TCL / iFFALCON 55U95A (Google TV, Android 14).
@@ -147,6 +152,9 @@ keyPassword=…
 To start hatun modu with creators already in it, put a `hatun-seed.json` in `app/src/main/assets/`:
 `{"version": "…", "creators": [{"handle": "…", "secUid": "…"}], "blocked": ["<secUid>", …]}`. It's ignored by
 git, and the app adds what's in it once for each new `version`.
+
+`./gradlew assembleRelease -Pinspect` builds a release that `chrome://inspect` can open, to look into the app
+already on a TV without losing its sign-in.
 
 Debug builds (`./gradlew installDebug`) can be inspected from desktop Chrome at `chrome://inspect`, and
 `falconLean.debug()` in the console shows the player's state.
