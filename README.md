@@ -25,6 +25,9 @@ likes and Following are the same as on your phone.
   paused on its first frame, so ▲▼ switches in about 0.2 s (after the first ~15 s, while TikTok's page loads).
 - **Starts fast.** The next few videos you haven't seen are saved for the next launch, so the first one plays
   in a few seconds instead of waiting for TikTok's page.
+- **Not interested.** While signed in and watching For You, press ▶, then ▼, then OK to send TikTok feedback
+  about the video. Once TikTok accepts it, the player removes that video from the queue. TikTok uses the feedback
+  to recommend fewer similar videos. [How TikTok recommends content](https://support.tiktok.com/en/using-tiktok/exploring-videos/how-tiktok-recommends-content/).
 - **Comments.** Open them from the button beside the video: they come up beside it while it plays on, with
   each comment's replies a press away.
 - **Creators' pages.** Their face beside the video opens who they are and their videos in a grid. Play one and
@@ -59,7 +62,7 @@ likes and Following are the same as on your phone.
 | OK | pause / play (on a button: press it) | show or hide the replies | play the video | press what the ring is on |
 | Hold OK | like (on hatun modu's button: add the creator to it, or in hatun modu take them out) | | | |
 | ◀ | TikTok's menu (on the buttons: back to the video) | close | move in the grid | move the focus ring |
-| ▶ | the buttons beside the video: creator, like, comments, share, hatun modu, auto next | | move in the grid | move the focus ring |
+| ▶ | the buttons beside the video: creator, like, Not interested, comments, share, hatun modu, auto next | | move in the grid | move the focus ring |
 | Back | leave the buttons, or exit | close | back to the feed | close the pop-up, menu or page |
 | Menu | sign in (QR code) | | | sign in (QR code) |
 | ⏯ ⏭ ⏮ | pause, next, previous | | | |
