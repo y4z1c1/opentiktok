@@ -117,8 +117,6 @@
   /** The furthest video reached: after going back up, the ones after it are still the unwatched ones. */
   let furthest = -1;
   const saveNext = () => {
-    if (items !== feed) return;
-    furthest = Math.max(furthest, index);
     try { localStorage.setItem(CACHE, JSON.stringify({ at: Date.now(), items: feed.slice(furthest + 1, furthest + 7) })); } catch (_) {}
   };
   const fromCache = () => {
@@ -233,7 +231,7 @@
    * Reading comments and creators' pages, TikTok answers nothing at all when our request names the device
    * platform (web_pc), signed or not; without it, it answers. The like request has always had it.
    */
-  const api = (path, params, post = false) => apiReady().then(ok => new Promise(resolve => {
+  const api = (path, params, { post = false, timeout = 0 } = {}) => apiReady().then(ok => new Promise(resolve => {
     const csrf = appContext()?.csrfToken;
     if (!ok || (post && !csrf)) return resolve(null);
     const from = new URL(feedUrl || apiFrom).searchParams;
@@ -243,15 +241,17 @@
     const x = new XMLHttpRequest();
     x.open(post ? 'POST' : 'GET', u.toString());
     x.withCredentials = true;
+    x.timeout = timeout;
     if (post) x.setRequestHeader('tt-csrf-token', csrf);
     x.onloadend = () => {
+      if (x.status < 200 || x.status >= 300) return resolve(null);
       try { resolve(JSON.parse(x.responseText)); } catch (_) { resolve(null); }
     };
     x.send();
   }));
 
   /** TikTok's like request (type 1 likes, 0 takes it back). True if TikTok took it. */
-  const sendLike = (id, on) => api('/api/commit/item/digg/', { aweme_id: id, type: on ? 1 : 0 }, true)
+  const sendLike = (id, on) => api('/api/commit/item/digg/', { aweme_id: id, type: on ? 1 : 0 }, { post: true })
     .then(j => j?.status_code === 0);
 
   // ---- TikTok's own player stays quiet on the feed ------------------------------------------------------
@@ -273,6 +273,7 @@
 
   const ICON = {
     heart: 'M12 20.6s-7.4-4.5-9.8-9.1C.6 8.4 2.5 4.4 6.4 4.4c2.3 0 3.9 1.3 5.6 3.4 1.7-2.1 3.3-3.4 5.6-3.4 3.9 0 5.8 4 4.2 7.1-2.4 4.6-9.8 9.1-9.8 9.1z',
+    dislike: 'M2 3h4v11H2zM8 3h10.8c1 0 1.8.7 1.9 1.7l1 6.9c.2 1.2-.8 2.4-2 2.4h-5.5l.5 4.4c.2 1.3-.8 2.6-2.2 2.6h-.7L8 14z',
     comment: 'M12 3.5c-5.3 0-9.5 3.6-9.5 8.1 0 2.5 1.3 4.7 3.4 6.2l-.6 3.2 3.8-2c.9.2 1.9.3 2.9.3 5.3 0 9.5-3.6 9.5-8.1S17.3 3.5 12 3.5z',
     save: 'M6.5 3h11c.6 0 1 .4 1 1v17l-6.5-4.2L5.5 21V4c0-.6.4-1 1-1z',
     share: 'M13.6 3.8v4.4C7.2 8.9 3.4 13.3 2.8 20c2.3-3.3 5.6-4.9 10.8-5v4.4L21.4 12z',
@@ -322,6 +323,11 @@
 
     .rail { right: 30px; bottom: 34px; display: flex; flex-direction: column; align-items: center; gap: 16px; }
     .act { display: flex; flex-direction: column; align-items: center; gap: 5px; }
+    .root:not(.for-you) .act.dislike, .root.waiting-for-feed .info, .root.waiting-for-feed .rail { display: none; }
+    @media (max-height: 550px) {
+      .root.for-you .rail { gap: 8px; bottom: 24px; }
+      .root.for-you .rail .bubble, .root.for-you .rail .face { width: 36px; height: 36px; }
+    }
     .bubble { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center;
       background: rgba(255, 255, 255, 0.14); transition: transform 160ms cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 160ms ease; }
     .bubble svg { width: 24px; height: 24px; fill: #fff; transition: fill 160ms ease; }
@@ -442,6 +448,7 @@
         <div class="chrome rail">
           <div class="act author"><img class="face" alt=""></div>
           <div class="act like"><div class="bubble">${svg(ICON.heart)}</div><div class="count"></div></div>
+          <div class="act dislike"><div class="bubble">${svg(ICON.dislike)}</div><div class="count"></div></div>
           <div class="act comments"><div class="bubble">${svg(ICON.comment)}</div><div class="count"></div></div>
           <div class="act share"><div class="bubble">${svg(ICON.share)}</div><div class="count"></div></div>
           <div class="act mine"><div class="bubble">${svg(ICON.spark)}</div><div class="count"></div></div>
@@ -510,6 +517,8 @@
     if (!root.classList.contains('tiktok-font') && tiktokFont()) root.classList.add('tiktok-font');
     renderAuto();
     renderMine();
+    root.classList.toggle('for-you', items === feed);
+    root.classList.remove('waiting-for-feed');
     for (const img of [$('.avatar'), $('.face')]) {
       if (it.avatar) img.src = it.avatar; else img.removeAttribute('src');
     }
@@ -521,6 +530,7 @@
     $('.music').innerHTML = it.music ? svg(ICON.note) : '';
     if (it.music) $('.music').append(it.music);
     renderLike(it);
+    $('.dislike .count').textContent = text().notInterested;
     $('.comments .count').textContent = count(it.comments);
     $('.share .count').textContent = count(it.shares || 0);
     // The glow: the cover drawn small and blurred once, then stretched. Nothing to redraw while it plays.
@@ -668,7 +678,7 @@
     if (current.currentTime > 1) current.currentTime = 0;
     userPaused = false;
     root.classList.remove('is-paused');
-    const playing = state === 'on' && !backgrounded;
+    const playing = state === 'on' && !backgrounded && view !== 'profile';
     if (playing) current.play().catch(() => {});
     // For debug(): key press to the new video's first frame on screen, both timed outside this thread.
     if (keyAt && current.requestVideoFrameCallback) {
@@ -688,7 +698,10 @@
     if (state === 'on') warm(next);
     load(i - 1);
     if (items.length - i < 5) moreOf();
-    saveNext();
+    if (items === feed) {
+      furthest = Math.max(furthest, index);
+      saveNext();
+    }
     return true;
   };
 
@@ -700,6 +713,24 @@
     if (show(index + dir)) return;
     // At the end: as soon as more videos arrive.
     if (dir > 0) { pendingStep = 1; buffering(true); moreOf(); }
+  };
+
+  const waitForFeed = () => {
+    if (current) {
+      current.pause();
+      current.classList.remove('now');
+      delete current.dataset.id;
+      current.removeAttribute('src');
+      current.removeAttribute('poster');
+      current.load();
+      current = null;
+    }
+    index = -1;
+    focusRail(-1);
+    root.classList.add('waiting-for-feed');
+    glow.classList.remove('on');
+    bar.style.transform = 'scaleX(0)';
+    step(1);
   };
 
   // ---- Auto next -----------------------------------------------------------------------------------------
@@ -926,7 +957,7 @@
       home = items = feed;
       root.classList.remove('mine');
       toast(text().forYou);
-      show(Math.max(0, mine.fyAt));
+      if (!show(Math.max(0, mine.fyAt))) waitForFeed();
     }
   };
 
@@ -973,11 +1004,63 @@
     });
   };
 
+  // ---- Not interested -----------------------------------------------------------------------------------
+
+  const feedbackPending = new Set();
+  const notInterested = async () => {
+    const it = items[index];
+    if (items !== feed || !it || feedbackPending.has(it.id)) return;
+    const template = feedUrl || apiFrom;
+    const login = template && new URL(template).searchParams.get('user_is_login');
+    if (login === 'false' || login === '0') return toast(text().feedbackSignIn);
+    if (!it.author?.uid) return toast(text().feedbackFailed);
+
+    feedbackPending.add(it.id);
+    toast(text().feedbackSending);
+    // TikTok's desktop For You player sends these two IDs with its normal signed write request.
+    const reply = await api('/api/dislike/item/', { item_id: it.id, item_author_id: it.author.uid },
+      { post: true, timeout: 15_000 }).catch(() => null);
+    feedbackPending.delete(it.id);
+    if (reply?.status_code !== 0) return toast(text().feedbackFailed);
+
+    dismissFromFeed(it);
+    toast(text().feedbackSent);
+  };
+
+  const dismissFromFeed = it => {
+    const at = feed.indexOf(it);
+    feed.splice(at, 1);
+    if (at <= furthest) furthest--;
+    if (at < mine.fyAt) mine.fyAt--;
+    // A return position on the dismissed last video now points to the previous one.
+    mine.fyAt = Math.min(mine.fyAt, feed.length - 1);
+    if (home === feed) {
+      if (at < homeAt) homeAt--;
+      homeAt = Math.min(homeAt, feed.length - 1);
+    }
+
+    if (items === feed && at <= index) {
+      // Videos after the removed one shift left. Move their slots too, so the current/next decoder stays warm.
+      if (at < feed.length) slots.push(slots.shift());
+      if (at < index) index--;
+      else {
+        if (view === 'comments') closeComments();
+        focusRail(-1);
+        pendingStep = 0;
+        if (show(Math.min(at, feed.length - 1))) return;
+        waitForFeed();
+      }
+    } else if (items === feed && at === index + 1) {
+      onItems();
+    }
+    saveNext();
+  };
+
   // ---- The buttons beside the video ----------------------------------------------------------------------
   // ▶ puts the ring on the like button, ▲▼ move it to the creator's face, the comments, sharing and auto next,
   // OK presses.
 
-  const RAIL = ['author', 'like', 'comments', 'share', 'mine', 'auto'];
+  const RAIL = ['author', 'like', 'dislike', 'comments', 'share', 'mine', 'auto'];
   /** Where the ring is on them, or -1 for not there. */
   let railAt = -1;
   const focusRail = i => {
@@ -988,6 +1071,7 @@
   const pressRail = () => {
     const what = RAIL[railAt];
     if (what === 'like') like();
+    else if (what === 'dislike') notInterested();
     else if (what === 'comments') openComments();
     else if (what === 'author') openProfile();
     else if (what === 'share') share();
@@ -1056,6 +1140,9 @@
       more: 'View more', none: 'No comments yet', failed: "Couldn't load. Try again later.", creator: 'Creator',
       following: 'Following', followers: 'Followers', likes: 'Likes', noVideos: 'No videos yet',
       private: 'This account is private', pinned: 'Pinned', autoOn: 'Auto: on', autoOff: 'Auto: off',
+      notInterested: 'Not interested', feedbackSignIn: 'Sign in to send feedback to TikTok.',
+      feedbackSending: 'Sending feedback…', feedbackFailed: "Couldn't send feedback to TikTok. Try again.",
+      feedbackSent: 'Feedback sent to TikTok',
       mine: 'hatun modu', forYou: 'For You', added: 'Added to hatun modu', already: 'Already in hatun modu',
       dropped: 'Taken out of hatun modu',
       mineEmpty: "hatun modu is empty. Hold OK on this button to add the video's creator.",
@@ -1065,6 +1152,9 @@
       more: 'Daha fazla görüntüle', none: 'Henüz yorum yok', failed: 'Yüklenemedi. Daha sonra tekrar dene.', creator: 'Üretici',
       following: 'Takip edilen', followers: 'Takipçi', likes: 'Beğeni', noVideos: 'Henüz video yok',
       private: 'Bu hesap gizli', pinned: 'Sabitlendi', autoOn: 'Oto: açık', autoOff: 'Oto: kapalı',
+      notInterested: 'İlgilenmiyorum', feedbackSignIn: "TikTok'a geri bildirim göndermek için giriş yap.",
+      feedbackSending: 'Geri bildirim gönderiliyor…', feedbackFailed: "TikTok'a geri bildirim gönderilemedi. Tekrar dene.",
+      feedbackSent: "TikTok'a geri bildirim gönderildi",
       mine: 'hatun modu', forYou: 'Senin İçin', added: 'hatun moduna eklendi', already: 'Zaten hatun modunda',
       dropped: 'hatun modundan çıkarıldı',
       mineEmpty: 'hatun modu boş. Videonun hesabını eklemek için bu düğmede OK\'a basılı tut.',
@@ -1411,7 +1501,7 @@
       items = home;
       const i = homeAt;
       homeAt = -1;
-      show(i);
+      if (!show(i) && items === feed) waitForFeed();
     } else if (current && !userPaused && state === 'on' && !backgrounded) {
       current.play().catch(() => {});
       untilMoving(current);
@@ -1491,9 +1581,10 @@
   function tick() {
     if (failed || !document.documentElement) return;
     shareTick();
-    if (onFeed() && !feed.length && performance.now() - bornAt > GIVE_UP_MS) return giveUp();
+    if (onFeed() && !started && !feed.length && performance.now() - bornAt > GIVE_UP_MS) return giveUp();
     const tv = window.falconTv;
-    setState(!onFeed() || !items.length && !(items === mine.items && mine.loading) ? 'off' : tv?.popup?.() ? 'under' : tv?.mode === 'menu' ? 'menu' : 'on');
+    const waiting = (items === feed && started) || (items === mine.items && mine.loading);
+    setState(!onFeed() || !items.length && !waiting ? 'off' : tv?.popup?.() ? 'under' : tv?.mode === 'menu' ? 'menu' : 'on');
     if (state === 'off') return;
     silenceTikTok();
     if (current?.duration) {
@@ -1530,8 +1621,12 @@
     }
     wake();
     if (railAt >= 0) {
-      if (key === 'ArrowUp' || key === 'ArrowDown') focusRail(Math.max(0, Math.min(RAIL.length - 1, railAt + (key === 'ArrowDown' ? 1 : -1))));
-      else if (key === 'ArrowLeft') focusRail(-1);
+      if (key === 'ArrowUp' || key === 'ArrowDown') {
+        const dir = key === 'ArrowDown' ? 1 : -1;
+        let next = railAt + dir;
+        if (items !== feed && RAIL[next] === 'dislike') next += dir;
+        focusRail(Math.max(0, Math.min(RAIL.length - 1, next)));
+      } else if (key === 'ArrowLeft') focusRail(-1);
       return;
     }
     if (key === 'ArrowUp' || key === 'ArrowDown') {
@@ -1542,7 +1637,7 @@
       keyAt = e.timeStamp;
       step(key === 'ArrowDown' ? 1 : -1);
     } else if (key === 'ArrowRight') {
-      focusRail(RAIL.indexOf('like'));
+      if (items[index]) focusRail(RAIL.indexOf('like'));
     } else {
       window.falconTv?.menu?.();
       tick();
